@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 )
 
+// Custom error type to indicate that the channel was closed
 type ChanClosedError struct{}
 
 func (e ChanClosedError) Error() string { return "channel closed" }
