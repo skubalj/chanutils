@@ -17,7 +17,13 @@ a "fanout" to pass messages to multiple consumers.
 This package is a collection of abstractions for working with Go channels,
 including functions for common patterns, some simple synchronization
 primitives, and an implementation of multi-producer, multi-consumer pubsub
-channels.
+and RPC channels.
+
+These abstractions are the result of years of writing similar patterns across
+multiple professional projects. Rather than re-writing these same abstractions
+for the nth time, I have decided to simply collect them into a single library
+where they can be referenced, tested, and maintained independently of any given
+employer's codebase. I hope that you find them to be as useful as I do.
 
 ## License
 

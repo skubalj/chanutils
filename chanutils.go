@@ -14,7 +14,9 @@ func (e ChanClosedError) Error() string { return "channel closed" }
 
 // Send a value to tx, then wait for a response from rx
 //
-// This pattern can be used to make RPC requests between goroutines
+// For general-purpose RPC routines, you may find [RpcChannel] to be more
+// ergonomic. However, this lower-level function still comes in handy when
+// additional control is desired.
 func SendAndRecv[T, U any](ctx context.Context, tx chan<- T, rx <-chan U, value T) (U, error) {
 	var zero U
 	select {
@@ -64,6 +66,11 @@ func Forward[T any](ctx context.Context, rx <-chan T, tx chan<- T) error {
 }
 
 // Removes all values currently in the channel
+//
+// Note that in a multithreaded context, this function is inherently racey:
+// a different thread could drop new messages into the channel while this
+// function returns, so the channel is NOT guaranteed to be empty after
+// Drain returns.
 func Drain[T any](rx <-chan T) {
 	for {
 		select {
@@ -97,7 +104,9 @@ func NewSemaphore(numPermits int) Semaphore {
 // Acquire a permit from the semaphore
 //
 // This function will block forever if required. You may want to prefer
-// [Semaphore.AcquireCtx], so that you have a way to abort.
+// [Semaphore.AcquireCtx], so that this method does not deadlock forever if
+// the semaphore has been put into an inconsistent state (such as by forgetting
+// to call [Semaphore.Release] after Acquire).
 func (s Semaphore) Acquire() {
 	s <- struct{}{}
 }
@@ -116,7 +125,8 @@ func (s Semaphore) TryAcquire() bool {
 
 // Acquire a permit from the semaphore, unless cancelled by the provided context.
 //
-// Returns nil if a permit has been acquired.
+// Returns nil if a permit has been acquired, or the error from the context, if
+// cancelled
 func (s Semaphore) AcquireCtx(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -141,12 +151,45 @@ func (s Semaphore) ReleaseAll() {
 //
 // This struct implements a scheme described in the documentation for [sync.Cond]:
 //
-// > For many simple use cases, users will be better off using channels than a
-// Cond (Broadcast corresponds to closing a channel, and Signal corresponds to
-// sending on a channel).
+//	For many simple use cases, users will be better off using channels than a
+//	Cond (Broadcast corresponds to closing a channel, and Signal corresponds to
+//	sending on a channel).
+//
+// This scheme has advantages over using a [sync.Locker] based condvar, namely
+// that multiple goroutines can be awakened at the same time without creating
+// lock contention.
 //
 // Gate differs from the trivial channel implementation by automatically
-// resetting after the channel is closed.
+// resetting after the channel is closed. This allows a single gate to be used
+// to announce changes to all listeners multiple times, but it means that some
+// care must be taken when waiting for changes: because no lock is held while
+// re-evaluating the condition, it is IMPERATIVE that you reset your Waiter
+// channel BEFORE you re-evaluate the condition to prevent missing changes.
+//
+// # Example
+//
+// Note that we reset the waiter first. This ensures that no changes can
+// occur between loading the value and waiting again. In this order, if
+// a change were to occur between the reset of the waiter and the load,
+// the worst that would happen is that we would evaluate the same value
+// twice. Note that this does NOT guarantee that each value will be seen
+// at least once.
+// 
+//	func WaitUntil(ctx context.Context, value *atomic.Int32, pred func(int32) bool) int32 {
+//		waiter := g.Waiter()
+//		for {
+//			select {
+//			case <-ctx.Done():
+//				return 0
+//			case <-waiter:
+//				waiter = g.Waiter()
+//				v := value.Load()
+//				if pred(v) {
+//					return v
+//				}
+//			}
+//		}
+//	}
 type Gate struct {
 	p atomic.Pointer[chan struct{}]
 }

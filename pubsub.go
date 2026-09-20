@@ -35,7 +35,7 @@ func (ps *PubSub[T]) MakePublisher() chan<- T {
 	return source
 }
 
-// Like [PubSub.Publisher], but cleans up resources automatically if the
+// Like [PubSub.MakePublisher], but cleans up resources automatically if the
 // context is cancelled. Note that if the context is cancelled, sending
 // values on the channel will block indefinitely.
 func (ps *PubSub[T]) MakePublisherCtx(ctx context.Context) chan<- T {

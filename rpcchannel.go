@@ -2,7 +2,12 @@ package chanutils
 
 import "context"
 
-// A channel abstraction implementing "request and response" pattern.
+// A channel abstraction implementing a simple "request and response" pattern.
+//
+// There are two sides to an RPC pattern: the "client" makes requests, and the
+// "server" responds to them. This pattern can be used with Go's lightweight
+// goroutines to build networks of actors that communicate with each other.
+// Think microservices, but within a single process.
 type RpcChannel[T, U any] struct {
 	ch chan RpcChannelRequest[T, U]
 }
@@ -17,7 +22,8 @@ func NewRpcChannel[T, U any](buffer int) RpcChannel[T, U] {
 // Send the given value T and wait for a response.
 //
 // This method is meant to be used by the client side of the RPC pair. If the
-// server closes the response channel, then error will be a [ChanClosedError]
+// server closes the response channel, then the returned error will be a
+// [ChanClosedError].
 func (c RpcChannel[T, U]) SendAndRecv(ctx context.Context, value T) (U, error) {
 	responseCh := make(chan U, 1)
 	msg := RpcChannelRequest[T, U]{
@@ -37,30 +43,29 @@ func (c RpcChannel[T, U]) Recv() <-chan RpcChannelRequest[T, U] {
 
 // A request sent across the RpcChannel
 type RpcChannelRequest[T, U any] struct {
-	Ctx        context.Context
-	Msg        T
-	responseCh chan<- U
-}
+	// Context specified by the client.
+	//
+	// Watching this context can tell the server when the client has cancelled
+	// their request, allowing the server to terminate work early.
+	Ctx context.Context
 
-// Get the context that was used to make the request (as passed by the client)
-//
-// This channel can be used by the server side to proactively cancel work that
-// was requested, rather than completing it and pushing the result to a buffer
-// that will never be read.
-func (m RpcChannelRequest[T, U]) RequestCtx() context.Context {
-	return m.Ctx
+	// The actual request data
+	Msg T
+
+	// Response channel used to send a reply
+	responseCh chan<- U
 }
 
 // Send the given value back to the client
 //
 // As [RpcChannel.SendAndRecv] uses buffered response channels, this method
 // will never block.
-func (m RpcChannelRequest[T, U]) Respond(value U) {
-	m.responseCh <- value
+func (req RpcChannelRequest[T, U]) Respond(value U) {
+	req.responseCh <- value
 }
 
 // Close the response channel. This can be used by the server side to indicate
 // that no response will be provided.
-func (m RpcChannelRequest[T, U]) Close() {
-	close(m.responseCh)
+func (req RpcChannelRequest[T, U]) Close() {
+	close(req.responseCh)
 }
