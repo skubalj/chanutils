@@ -28,11 +28,11 @@ func NewRpcChannel[T, U any](buffer int) RpcChannel[T, U] {
 // server closes the response channel, then the returned error will be a
 // [ChanClosedError].
 func (c RpcChannel[T, U]) SendAndRecv(ctx context.Context, value T) (U, error) {
-	responseCh := make(chan RpcChannelResponse[U], 1)
+	responseCh := make(chan rpcChannelResponse[U], 1)
 	msg := RpcChannelRequest[T, U]{
 		Ctx:        ctx,
 		Msg:        value,
-		ResponseCh: responseCh,
+		responseCh: responseCh,
 	}
 	res, err := SendAndRecv(ctx, c.ch, responseCh, msg)
 	return res.Ok, cmp.Or(err, res.Err)
@@ -43,6 +43,29 @@ func (c RpcChannel[T, U]) SendAndRecv(ctx context.Context, value T) (U, error) {
 // This method is meant to be used by the server side of the RPC pair.
 func (c RpcChannel[T, U]) Recv() <-chan RpcChannelRequest[T, U] {
 	return c.ch
+}
+
+// Close the rpc channel.
+//
+// After this method is called, the channel returned by [RpcChannel.Recv] will
+// be closed.
+func (c RpcChannel[T, U]) Close() {
+	close(c.ch)
+}
+
+// Interface for the server side of an RPC channel
+//
+// Equivalent to `<-chan`
+type RpcChannelServer[T, U any] interface {
+	Recv() <-chan RpcChannelRequest[T, U]
+}
+
+// Interface for the client side of the RPC RpcChannel
+//
+// Equivalent to `chan<-`
+type RpcChannelClient[T, U any] interface {
+	SendAndRecv(ctx context.Context, value T) (U, error)
+	Close()
 }
 
 // A request sent across the RpcChannel
@@ -64,7 +87,7 @@ type RpcChannelRequest[T, U any] struct {
 	//
 	// Generally, users should prefer the Respond and RespondError methods
 	// over interacting with this channel directly.
-	ResponseCh chan<- RpcChannelResponse[U]
+	responseCh chan<- rpcChannelResponse[U]
 }
 
 // Send the given value back to the client
@@ -73,7 +96,7 @@ type RpcChannelRequest[T, U any] struct {
 // (or RespondError) will never block, so long as only one of them is called
 // a single time.
 func (req RpcChannelRequest[T, U]) Respond(value U) {
-	req.ResponseCh <- RpcChannelResponse[U]{Ok: value}
+	req.responseCh <- rpcChannelResponse[U]{Ok: value}
 }
 
 // Send the given error back to the client
@@ -82,7 +105,7 @@ func (req RpcChannelRequest[T, U]) Respond(value U) {
 // (or Respond) will never block, so long as only one of them is called
 // a single time.
 func (req RpcChannelRequest[T, U]) RespondErr(err error) {
-	req.ResponseCh <- RpcChannelResponse[U]{Err: err}
+	req.responseCh <- rpcChannelResponse[U]{Err: err}
 }
 
 // Close the response channel. This can be used by the server side to indicate
@@ -90,10 +113,10 @@ func (req RpcChannelRequest[T, U]) RespondErr(err error) {
 //
 // As elsewhere in Go, is not necessary to close the underlying channel.
 func (req RpcChannelRequest[T, U]) Close() {
-	close(req.ResponseCh)
+	close(req.responseCh)
 }
 
-type RpcChannelResponse[T any] struct {
+type rpcChannelResponse[T any] struct {
 	Ok  T
 	Err error
 }
