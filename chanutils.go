@@ -3,14 +3,13 @@ package chanutils
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"sync/atomic"
 )
 
 // Custom error type to indicate that the channel was closed
-type ChanClosedError struct{}
-
-func (e ChanClosedError) Error() string { return "channel closed" }
+var ChanClosedError = errors.New("channel closed")
 
 // Send a value to tx, then wait for a response from rx
 //
@@ -30,7 +29,7 @@ func SendAndRecv[T, U any](ctx context.Context, tx chan<- T, rx <-chan U, value 
 		return zero, ctx.Err()
 	case v, ok := <-rx:
 		if !ok {
-			return zero, ChanClosedError{}
+			return zero, ChanClosedError
 		}
 		return v, nil
 	}
@@ -53,7 +52,7 @@ func Forward[T any](ctx context.Context, rx <-chan T, tx chan<- T) error {
 			return ctx.Err()
 		case val, ok := <-rx:
 			if !ok {
-				return ChanClosedError{}
+				return ChanClosedError
 			}
 
 			select {
@@ -174,7 +173,7 @@ func (s Semaphore) ReleaseAll() {
 // the worst that would happen is that we would evaluate the same value
 // twice. Note that this does NOT guarantee that each value will be seen
 // at least once.
-// 
+//
 //	func WaitUntil(ctx context.Context, value *atomic.Int32, pred func(int32) bool) int32 {
 //		waiter := g.Waiter()
 //		for {
