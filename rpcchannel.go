@@ -53,14 +53,14 @@ func (c RpcChannel[T, U]) Close() {
 	close(c.ch)
 }
 
-// Interface for the server side of an RPC channel
+// Interface for the server side of an RpcChannel
 //
 // Equivalent to `<-chan`
 type RpcChannelServer[T, U any] interface {
 	Recv() <-chan RpcChannelRequest[T, U]
 }
 
-// Interface for the client side of the RPC RpcChannel
+// Interface for the client side of an RpcChannel
 //
 // Equivalent to `chan<-`
 type RpcChannelClient[T, U any] interface {
