@@ -112,7 +112,12 @@ func (ps *PubSub[T]) MakeSubscriberCtx(ctx context.Context) (<-chan T, CancelFun
 				return
 			case <-ptr.wait:
 				ptr = ptr.next
-				sink <- ptr.value
+
+				select {
+				case <-ctx.Done():
+					return
+				case sink <- ptr.value:
+				}
 			}
 		}
 	}(ps.end)
@@ -145,7 +150,12 @@ func (ps *PubSub[T]) RegisterSubscriberCtx(ctx context.Context, sink chan<- T) C
 				return
 			case <-ptr.wait:
 				ptr = ptr.next
-				sink <- ptr.value
+
+				select {
+				case <-ctx.Done():
+					return
+				case sink <- ptr.value:
+				}
 			}
 		}
 	}(ps.end)

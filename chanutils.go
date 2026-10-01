@@ -207,8 +207,15 @@ func (g *Gate) Waiter() <-chan struct{} {
 }
 
 // Release a single consumer that is waiting
-func (g *Gate) ReleaseOne() {
-	(*g.p.Load()) <- struct{}{}
+//
+// Returns false if no consumers are currently waiting
+func (g *Gate) ReleaseOne() bool {
+	select {
+	case (*g.p.Load()) <- struct{}{}:
+		return true
+	default:
+		return false
+	}
 }
 
 // Release all consumers that are currently waiting
@@ -258,14 +265,17 @@ func (c *CondValue[T]) Get() T { return c.value }
 // The mutex must be locked with Lock before calling this function. This
 // function will unlock the mutex while it waits, but will always lock the
 // mutex before it returns.
-func (c *CondValue[T]) Wait(ctx context.Context) (value T, err error) {
+func (c *CondValue[T]) Wait(ctx context.Context) (T, error) {
+	// Note that we get the waiter before we unlock. This ensures that we don't
+	// miss any updates that happen between unlocking and entering the select
+	waiter := c.notifier.Waiter()
 	c.lock.Unlock()
 
 	select {
 	case <-ctx.Done():
 		c.lock.Lock()
-		return value, ctx.Err()
-	case <-c.notifier.Waiter():
+		return c.value, ctx.Err()
+	case <-waiter:
 		// We can't defer this lock because we must prevent concurrent access
 		// to it when we copy it into the return variable.
 		c.lock.Lock()
@@ -273,8 +283,10 @@ func (c *CondValue[T]) Wait(ctx context.Context) (value T, err error) {
 	}
 }
 
-// Wait for changes, ignoring them until the context expires or the predicate
-// evaluates to true.
+// Return the first value seen for which the predicate evaluates to true. If
+// the initial value passes the predicate, then it will be returned immediately
+// without waiting. Otherwise, we will repeatedly wait for changes and return
+// the first passing value.
 //
 // Note that the same caveats apply here as with OnChange: it is not guaranteed
 // that every state change will be inspected. However, the value that is
@@ -284,6 +296,10 @@ func (c *CondValue[T]) Wait(ctx context.Context) (value T, err error) {
 // function will unlock the mutex while it waits, but will always lock the
 // mutex before it returns.
 func (c *CondValue[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (value T, err error) {
+	if initialValue := c.Get(); predicate(initialValue) {
+		return initialValue, nil
+	}
+
 	for candidate := range c.OnChange(ctx) {
 		if predicate(candidate) {
 			return candidate, nil
@@ -293,6 +309,8 @@ func (c *CondValue[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (v
 }
 
 // Helper function to update the value stored inside this CondVar and notify all waiters.
+//
+// The mutex must be locked with Lock before calling this function.
 func (c *CondValue[T]) Update(value T) {
 	defer c.notifier.ReleaseAll()
 	c.value = value
