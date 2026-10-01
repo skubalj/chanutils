@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"sync"
 	"sync/atomic"
 )
 
@@ -215,4 +216,105 @@ func (g *Gate) ReleaseAll() {
 	ch := make(chan struct{})
 	old := g.p.Swap(&ch)
 	close(*old)
+}
+
+// An observable value; conceptually a sync.Cond that owns the data it is
+// guarding, backed by a [Gate].
+//
+// The major advantage over sync.Cond is that waits take contexts and return
+// immediately when the context is cancelled. However, note that users must
+// still manually lock and unlock the CondValue around the critical section.
+type CondValue[T any] struct {
+	// channel based notifier
+	notifier *Gate
+	// Held while the value is inspected or modified
+	lock  sync.Mutex
+	value T
+}
+
+// Create a new CondValue with the given initial value
+func NewCondValue[T any](init T) *CondValue[T] {
+	return &CondValue[T]{
+		notifier: NewGate(),
+		value:    init,
+	}
+}
+
+// Lock the internal mutex so that the value doesn't change
+func (c *CondValue[T]) Lock() { c.lock.Lock() }
+
+// Unlock the internal mutex so that the value can be changed
+func (c *CondValue[T]) Unlock() { c.lock.Unlock() }
+
+// Get the current value from the condvar.
+//
+// Note that this function does not lock the mutex. As with other methods on
+// this type, Lock must be called before this function.
+func (c *CondValue[T]) Get() T { return c.value }
+
+// Wait for an update to be signaled, or until the context expires and return
+// the current value.
+//
+// The mutex must be locked with Lock before calling this function. This
+// function will unlock the mutex while it waits, but will always lock the
+// mutex before it returns.
+func (c *CondValue[T]) Wait(ctx context.Context) (value T, err error) {
+	c.lock.Unlock()
+
+	select {
+	case <-ctx.Done():
+		c.lock.Lock()
+		return value, ctx.Err()
+	case <-c.notifier.Waiter():
+		// We can't defer this lock because we must prevent concurrent access
+		// to it when we copy it into the return variable.
+		c.lock.Lock()
+		return c.value, nil
+	}
+}
+
+// Wait for changes, ignoring them until the context expires or the predicate
+// evaluates to true.
+//
+// Note that the same caveats apply here as with OnChange: it is not guaranteed
+// that every state change will be inspected. However, the value that is
+// returned is guaranteed to have been tested with the predicate.
+//
+// The mutex must be locked with Lock before calling this function. This
+// function will unlock the mutex while it waits, but will always lock the
+// mutex before it returns.
+func (c *CondValue[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (value T, err error) {
+	for candidate := range c.OnChange(ctx) {
+		if predicate(candidate) {
+			return candidate, nil
+		}
+	}
+	return value, ctx.Err()
+}
+
+// Helper function to update the value stored inside this CondVar and notify all waiters.
+func (c *CondValue[T]) Update(value T) {
+	defer c.notifier.ReleaseAll()
+	c.value = value
+}
+
+// Return an iterator that yields the value when the CondVar's notifier is triggered.
+//
+// Note that it is not guaranteed that each independent state will be yielded.
+// It is possible for other waiting threads to modify the value before it is
+// seen by this thread. If you need multiple consumers to see every value that
+// occurs, you may want to consider using a [PubSub] channel.
+//
+// The mutex must be locked with Lock before calling this function. This
+// function will unlock the mutex while it waits, but will always lock the
+// mutex before it returns.
+func (c *CondValue[T]) OnChange(ctx context.Context) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for {
+			value, err := c.Wait(ctx)
+			if err != nil || !yield(value) {
+				return
+			}
+		}
+	}
 }

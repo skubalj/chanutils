@@ -23,25 +23,16 @@ func Test_RpcChannel(t *testing.T) {
 	})
 
 	res, err := ch.SendAndRecv(ctx, 1)
-	if err != nil {
-		t.Errorf("error: %v", err)
-	} else if res != 1 {
-		t.Errorf("expected 1, got %d", res)
-	}
+	requireEqual(t, err, nil)
+	requireEqual(t, res, 1)
 
 	res, err = ch.SendAndRecv(ctx, 2)
-	if err != nil {
-		t.Errorf("error: %v", err)
-	} else if res != 4 {
-		t.Errorf("expected 4, got %d", res)
-	}
+	requireEqual(t, err, nil)
+	requireEqual(t, res, 4)
 
 	res, err = ch.SendAndRecv(ctx, 3)
-	if err != nil {
-		t.Errorf("error: %v", err)
-	} else if res != 9 {
-		t.Errorf("expected 9, got %d", res)
-	}
+	requireEqual(t, err, nil)
+	requireEqual(t, res, 9)
 
 	cancel()
 	wg.Wait()

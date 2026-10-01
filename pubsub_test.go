@@ -89,7 +89,7 @@ func TestPubSub_mpsc(t *testing.T) {
 	expected := []int{0, 0, 1, 1, 2, 2, 3, 3, 4, 4}
 	actual := slices.Sorted(iterTake(AsIter(rx), 10))
 	rxCancel()
-	requireElementsMatch(t, expected, actual)
+	requireSliceEqual(t, expected, actual)
 }
 
 func TestPubSub_spmc(t *testing.T) {
@@ -130,18 +130,18 @@ func TestPubSub_spmc(t *testing.T) {
 	wg.Wait()
 
 	expected := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
-	requireElementsMatch(t, expected, a)
-	requireElementsMatch(t, expected, b)
-	requireElementsMatch(t, expected, c)
+	requireSliceEqual(t, expected, a)
+	requireSliceEqual(t, expected, b)
+	requireSliceEqual(t, expected, c)
 }
 
 func Test_iterTake(t *testing.T) {
 	arr := []int{1, 2, 3, 4, 5, 6}
-	requireElementsMatch(t, []int{}, slices.Collect(iterTake(slices.Values(arr), 0)))
-	requireElementsMatch(t, []int{1}, slices.Collect(iterTake(slices.Values(arr), 1)))
-	requireElementsMatch(t, []int{1, 2, 3}, slices.Collect(iterTake(slices.Values(arr), 3)))
-	requireElementsMatch(t, []int{1, 2, 3, 4, 5, 6}, slices.Collect(iterTake(slices.Values(arr), 6)))
-	requireElementsMatch(t, []int{1, 2, 3, 4, 5, 6}, slices.Collect(iterTake(slices.Values(arr), 8)))
+	requireSliceEqual(t, []int{}, slices.Collect(iterTake(slices.Values(arr), 0)))
+	requireSliceEqual(t, []int{1}, slices.Collect(iterTake(slices.Values(arr), 1)))
+	requireSliceEqual(t, []int{1, 2, 3}, slices.Collect(iterTake(slices.Values(arr), 3)))
+	requireSliceEqual(t, []int{1, 2, 3, 4, 5, 6}, slices.Collect(iterTake(slices.Values(arr), 6)))
+	requireSliceEqual(t, []int{1, 2, 3, 4, 5, 6}, slices.Collect(iterTake(slices.Values(arr), 8)))
 }
 
 func Test_iterTake_chan(t *testing.T) {
@@ -154,7 +154,7 @@ func Test_iterTake_chan(t *testing.T) {
 
 	expected := []int{0, 1, 2, 3, 4, 5}
 	actual := slices.Collect(iterTake(AsIter(ch), 6))
-	requireElementsMatch(t, expected, actual)
+	requireSliceEqual(t, expected, actual)
 }
 
 func iterTake[T any](i iter.Seq[T], n int) iter.Seq[T] {
@@ -169,23 +169,5 @@ func iterTake[T any](i iter.Seq[T], n int) iter.Seq[T] {
 				return
 			}
 		}
-	}
-}
-
-func requireEqual[V comparable](t *testing.T, a, b V) {
-	t.Helper()
-	if a != b {
-		t.Errorf("expected %v == %v", a, b)
-	}
-}
-
-func requireElementsMatch[V comparable](t *testing.T, a, b []V) {
-	t.Helper()
-	if len(a) != len(b) {
-		t.Errorf("expected len(a) == len(b): got %d != %d", len(a), len(b))
-	}
-
-	for i := range a {
-		requireEqual(t, a[i], b[i])
 	}
 }
