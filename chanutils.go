@@ -259,13 +259,16 @@ func (c *CondValue[T]) Get() T { return c.value }
 // function will unlock the mutex while it waits, but will always lock the
 // mutex before it returns.
 func (c *CondValue[T]) Wait(ctx context.Context) (value T, err error) {
+	// Note that we get the waiter before we unlock. This ensures that we don't
+	// miss any updates that happen between unlocking and entering the select
+	waiter := c.notifier.Waiter()
 	c.lock.Unlock()
 
 	select {
 	case <-ctx.Done():
 		c.lock.Lock()
 		return value, ctx.Err()
-	case <-c.notifier.Waiter():
+	case <-waiter:
 		// We can't defer this lock because we must prevent concurrent access
 		// to it when we copy it into the return variable.
 		c.lock.Lock()
