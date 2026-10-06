@@ -92,6 +92,29 @@ func AsIter[T any](ch <-chan T) iter.Seq[T] {
 	}
 }
 
+// Pipe values from the source iterator into the channel. This function blocks
+// until the iterator ends or the context is closed.
+func PipeIter[T any](ctx context.Context, src iter.Seq[T], sink chan<- T) {
+	for val := range src {
+		select {
+		case <-ctx.Done():
+			return
+		case sink <- val:
+		}
+	}
+}
+
+// Return a channel that will yield each element from the iterator. The
+// channel will be closed when the iterator ends or the context is closed.
+func FromIter[T any](ctx context.Context, itr iter.Seq[T]) <-chan T {
+	ch := make(chan T)
+	go func() {
+		defer close(ch)
+		PipeIter(ctx, itr, ch)
+	}()
+	return ch
+}
+
 // A simple synchronization primitive that allows only a certain number of
 // consumers access to a critical section at a time.
 type Semaphore chan struct{}
@@ -314,6 +337,13 @@ func (c *CondValue[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (v
 func (c *CondValue[T]) Update(value T) {
 	defer c.notifier.ReleaseAll()
 	c.value = value
+}
+
+// Use the given callback to update the value
+func (c *CondValue[T]) UpdateWith(cb func(*T)) {
+	val := c.Get()
+	cb(&val)
+	c.Update(val)
 }
 
 // Return an iterator that yields the value when the CondVar's notifier is triggered.

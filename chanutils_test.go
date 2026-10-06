@@ -39,6 +39,29 @@ func square(x iter.Seq[int]) iter.Seq[int] {
 	}
 }
 
+func Test_FromIter_autoclose(t *testing.T) {
+	expected := 1
+	for val := range FromIter(context.Background(), slices.Values([]int{1, 2, 3, 4, 5})) {
+		requireEqual(t, val, expected)
+		expected++
+	}
+}
+
+func Test_FromIter_context(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	expected := 1
+	for val := range FromIter(ctx, slices.Values([]int{1, 2, 3, 4, 5})) {
+		if val == 3 {
+			cancel()
+		} else if val > 3 {
+			t.Fail()
+		}
+
+		requireEqual(t, val, expected)
+		expected++
+	}
+}
+
 func TestCondValue(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancelTimeout()

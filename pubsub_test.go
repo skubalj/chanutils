@@ -9,7 +9,66 @@ import (
 	"time"
 )
 
-func TestPubSub_spsc(t *testing.T) {
+func Test_PubSub_uninitialized_send_first(t *testing.T) {
+	ps := new(PubSub[int])
+	ps.Send(1)
+
+	ch, cancel := ps.MakeSubscriber()
+	defer cancel()
+
+	ps.Send(2)
+	requireEqual(t, 2, <-ch)
+}
+
+func Test_PubSub_uninitialized_receive_first(t *testing.T) {
+	ps := new(PubSub[int])
+
+	ch, cancel := ps.MakeSubscriber()
+	defer cancel()
+
+	ps.Send(1)
+	requireEqual(t, 1, <-ch)
+}
+
+func Test_PubSub_send(t *testing.T) {
+	ps := NewPubSub[int]()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	rx, rxCancel := ps.MakeSubscriberCtx(ctx)
+	defer rxCancel()
+
+	ps.Send(1)
+	ps.Send(2)
+	ps.Send(3)
+
+	requireEqual(t, 1, <-rx)
+	requireEqual(t, 2, <-rx)
+	requireEqual(t, 3, <-rx)
+}
+
+func Test_PubSub_Iter(t *testing.T) {
+	ps := NewPubSub[int]()
+	ps.Send(0)
+	itr := ps.Iter()
+
+	var wg sync.WaitGroup
+	var arr []int
+	wg.Go(func() {
+		arr = slices.Collect(iterTake(itr, 4))
+	})
+
+	ps.Send(1)
+	ps.Send(2)
+	ps.Send(3)
+	ps.Send(4)
+	ps.Send(5)
+	wg.Wait()
+
+	requireSliceEqual(t, arr, []int{1, 2, 3, 4})
+}
+
+func Test_PubSub_spsc(t *testing.T) {
 	ps := NewPubSub[int]()
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -31,7 +90,7 @@ func TestPubSub_spsc(t *testing.T) {
 	requireEqual(t, 3, <-rx)
 }
 
-func TestPubSub_lateStart(t *testing.T) {
+func Test_PubSub_lateStart(t *testing.T) {
 	ps := NewPubSub[int]()
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -59,7 +118,7 @@ func TestPubSub_lateStart(t *testing.T) {
 	requireEqual(t, 4, <-rx2)
 }
 
-func TestPubSub_mpsc(t *testing.T) {
+func Test_PubSub_mpsc(t *testing.T) {
 	ps := NewPubSub[int]()
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -92,7 +151,7 @@ func TestPubSub_mpsc(t *testing.T) {
 	requireSliceEqual(t, expected, actual)
 }
 
-func TestPubSub_spmc(t *testing.T) {
+func Test_PubSub_spmc(t *testing.T) {
 	ps := NewPubSub[int]()
 
 	var wg sync.WaitGroup

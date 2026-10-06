@@ -2,6 +2,7 @@ package chanutils
 
 import (
 	"context"
+	"iter"
 	"sync"
 )
 
@@ -20,10 +21,9 @@ type PubSub[T any] struct {
 	end *cons[T]
 }
 
+// Equivalent to new(PubSub[T])
 func NewPubSub[T any]() *PubSub[T] {
-	var zero T
-	initialValue := newCons(zero)
-	return &PubSub[T]{end: initialValue}
+	return &PubSub[T]{end: zeroCons[T]()}
 }
 
 // Get a channel that can be used to publish messages to all subscribers
@@ -50,7 +50,7 @@ func (ps *PubSub[T]) MakePublisherCtx(ctx context.Context) chan<- T {
 func (ps *PubSub[T]) RegisterPublisher(source <-chan T) {
 	go func() {
 		for value := range source {
-			ps.insert(value)
+			ps.Send(value)
 		}
 	}()
 }
@@ -69,19 +69,53 @@ func (ps *PubSub[T]) RegisterPublisherCtx(ctx context.Context, source <-chan T) 
 				if !ok {
 					return
 				}
-				ps.insert(value)
+				ps.Send(value)
 			}
 		}
 	}()
 }
 
-func (ps *PubSub[T]) insert(value T) {
+// Directly send a value to all subscribers without creating a dedicated
+// publisher channel
+func (ps *PubSub[T]) Send(value T) {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
+
+	if ps.end == nil {
+		ps.end = zeroCons[T]()
+	}
 
 	ps.end.next = newCons(value)
 	close(ps.end.wait)
 	ps.end = ps.end.next
+}
+
+func (ps *PubSub[T]) Iter() iter.Seq[T] {
+	return ps.IterCtx(context.Background())
+}
+
+func (ps *PubSub[T]) IterCtx(ctx context.Context) iter.Seq[T] {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	if ps.end == nil {
+		ps.end = zeroCons[T]()
+	}
+
+	ptr := ps.end
+	return func(yield func(T) bool) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ptr.wait:
+				ptr = ptr.next
+				if !yield(ptr.value) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // Get a channel that will return every value produced by any of the publishers.
@@ -97,30 +131,15 @@ func (ps *PubSub[T]) MakeSubscriber() (<-chan T, CancelFunc) {
 // While the context will clean up resources, it is still advisable to call
 // the cancel function proactively when you are done using the channel.
 func (ps *PubSub[T]) MakeSubscriberCtx(ctx context.Context) (<-chan T, CancelFunc) {
-	ps.mtx.Lock()
-	defer ps.mtx.Unlock()
-
-	sink := make(chan T)
 	ctx, cancel := context.WithCancel(ctx)
+	itr := ps.IterCtx(ctx)
+	sink := make(chan T)
 
-	go func(ptr *cons[T]) {
-		defer cancel()
+	go func() {
 		defer close(sink)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ptr.wait:
-				ptr = ptr.next
-
-				select {
-				case <-ctx.Done():
-					return
-				case sink <- ptr.value:
-				}
-			}
-		}
-	}(ps.end)
+		defer cancel()
+		PipeIter(ctx, itr, sink)
+	}()
 
 	return sink, CancelFunc(cancel)
 }
@@ -138,27 +157,13 @@ func (ps *PubSub[T]) RegisterSubscriber(sink chan<- T) CancelFunc {
 // The provided channel will not be closed automatically when the cancel
 // function is called.
 func (ps *PubSub[T]) RegisterSubscriberCtx(ctx context.Context, sink chan<- T) CancelFunc {
-	ps.mtx.Lock()
-	defer ps.mtx.Unlock()
-
 	ctx, cancel := context.WithCancel(ctx)
-	go func(ptr *cons[T]) {
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ptr.wait:
-				ptr = ptr.next
+	itr := ps.IterCtx(ctx)
 
-				select {
-				case <-ctx.Done():
-					return
-				case sink <- ptr.value:
-				}
-			}
-		}
-	}(ps.end)
+	go func() {
+		defer cancel()
+		PipeIter(ctx, itr, sink)
+	}()
 
 	return CancelFunc(cancel)
 }
@@ -170,6 +175,13 @@ type cons[T any] struct {
 	value T
 	wait  chan struct{}
 	next  *cons[T]
+}
+
+func zeroCons[T any]() *cons[T] {
+	return &cons[T]{
+		wait: make(chan struct{}),
+		next: nil,
+	}
 }
 
 func newCons[T any](value T) *cons[T] {
