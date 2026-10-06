@@ -331,19 +331,19 @@ func (c *CondValue[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (v
 	return value, ctx.Err()
 }
 
-// Helper function to update the value stored inside this CondVar and notify all waiters.
+// Set the value stored inside this CondVar and notify all waiters.
 //
 // The mutex must be locked with Lock before calling this function.
-func (c *CondValue[T]) Update(value T) {
+func (c *CondValue[T]) Store(value T) {
 	defer c.notifier.ReleaseAll()
 	c.value = value
 }
 
 // Use the given callback to update the value
-func (c *CondValue[T]) UpdateWith(cb func(*T)) {
+func (c *CondValue[T]) Update(cb func(*T)) {
 	val := c.Get()
 	cb(&val)
-	c.Update(val)
+	c.Store(val)
 }
 
 // Return an iterator that yields the value when the CondVar's notifier is triggered.
@@ -351,7 +351,7 @@ func (c *CondValue[T]) UpdateWith(cb func(*T)) {
 // Note that it is not guaranteed that each independent state will be yielded.
 // It is possible for other waiting threads to modify the value before it is
 // seen by this thread. If you need multiple consumers to see every value that
-// occurs, you may want to consider using a [PubSub] channel.
+// occurs, you may want to consider using an [Observable].
 //
 // The mutex must be locked with Lock before calling this function. This
 // function will unlock the mutex while it waits, but will always lock the

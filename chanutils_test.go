@@ -49,6 +49,7 @@ func Test_FromIter_autoclose(t *testing.T) {
 
 func Test_FromIter_context(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	expected := 1
 	for val := range FromIter(ctx, slices.Values([]int{1, 2, 3, 4, 5})) {
 		if val == 3 {
@@ -91,7 +92,7 @@ func TestCondValue(t *testing.T) {
 	wg.Go(func() {
 		for range 7 {
 			cv.Lock()
-			cv.Update(cv.Get() + 1)
+			cv.Update(func(val *int) { *val += 1 })
 			cv.Unlock()
 			time.Sleep(10 * time.Millisecond)
 		}

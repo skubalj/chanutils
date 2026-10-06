@@ -81,13 +81,7 @@ func (ps *PubSub[T]) Send(value T) {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	if ps.end == nil {
-		ps.end = zeroCons[T]()
-	}
-
-	ps.end.next = newCons(value)
-	close(ps.end.wait)
-	ps.end = ps.end.next
+	ps.end = ps.end.Append(value)
 }
 
 func (ps *PubSub[T]) Iter() iter.Seq[T] {
@@ -102,20 +96,7 @@ func (ps *PubSub[T]) IterCtx(ctx context.Context) iter.Seq[T] {
 		ps.end = zeroCons[T]()
 	}
 
-	ptr := ps.end
-	return func(yield func(T) bool) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ptr.wait:
-				ptr = ptr.next
-				if !yield(ptr.value) {
-					return
-				}
-			}
-		}
-	}
+	return ps.end.Iter(ctx)
 }
 
 // Get a channel that will return every value produced by any of the publishers.
@@ -168,6 +149,84 @@ func (ps *PubSub[T]) RegisterSubscriberCtx(ctx context.Context, sink chan<- T) C
 	return CancelFunc(cancel)
 }
 
+// An observable value; conceptually a sync.Cond that owns its data and ensures
+// that every state can be seen.
+//
+// Internally, this Cond is backed by a PubSub channel. This differs from
+// CondValue in that it ensures that the OnChange and WaitUntil methods see
+// every value. However, this type gives less control over the lock.
+type Observable[T any] PubSub[T]
+
+// Create a new CondPubSub with the given initial value
+func NewObservable[T any](init T) *Observable[T] {
+	c := new(Observable[T])
+	c.Store(init)
+	return c
+}
+
+func (c *Observable[T]) getHead() *cons[T] {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	return c.end
+}
+
+// Get the most recent value from the Cond
+func (c *Observable[T]) Get() T {
+	return c.getHead().value
+}
+
+// Wait for an update to be signaled, or until the context expires and return
+// the current value.
+func (c *Observable[T]) Wait(ctx context.Context) (T, error) {
+	end := c.getHead()
+
+	select {
+	case <-ctx.Done():
+		return end.value, ctx.Err()
+	case <-end.wait:
+		return end.next.value, nil
+	}
+}
+
+// Return the first value seen for which the predicate evaluates to true. If
+// the initial value passes the predicate, then it will be returned immediately
+// without waiting. Otherwise, we will repeatedly wait for changes and return
+// the first passing value.
+func (c *Observable[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (value T, err error) {
+	end := c.getHead()
+
+	if predicate(end.value) {
+		return end.value, nil
+	}
+
+	for candidate := range end.Iter(ctx) {
+		if predicate(candidate) {
+			return candidate, nil
+		}
+	}
+	return value, ctx.Err()
+}
+
+// Helper function to update the value stored inside this CondVar and notify all waiters.
+func (c *Observable[T]) Store(value T) {
+	(*PubSub[T])(c).Send(value)
+}
+
+// Use the given callback to update the value
+func (c *Observable[T]) Update(cb func(*T)) {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	val := c.end.value
+	cb(&val)
+	c.end = c.end.Append(val)
+}
+
+// Return an iterator that yields each state that occurs in this Cond
+func (c *Observable[T]) OnChange(ctx context.Context) iter.Seq[T] {
+	return (*PubSub[T])(c).IterCtx(ctx)
+}
+
 // Function to release resources associated with a PubSub resource
 type CancelFunc func()
 
@@ -184,10 +243,33 @@ func zeroCons[T any]() *cons[T] {
 	}
 }
 
-func newCons[T any](value T) *cons[T] {
-	return &cons[T]{
+func (c *cons[T]) Append(value T) *cons[T] {
+	next := &cons[T]{
 		value: value,
 		wait:  make(chan struct{}),
 		next:  nil,
+	}
+
+	if c != nil {
+		c.next = next
+		close(c.wait)
+	}
+
+	return next
+}
+
+func (c *cons[T]) Iter(ctx context.Context) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.wait:
+				c = c.next
+				if !yield(c.value) {
+					return
+				}
+			}
+		}
 	}
 }

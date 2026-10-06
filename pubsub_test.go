@@ -194,6 +194,47 @@ func Test_PubSub_spmc(t *testing.T) {
 	requireSliceEqual(t, expected, c)
 }
 
+func Test_Observable(t *testing.T) {
+	ctx, cancelTimeout := context.WithTimeout(context.Background(), time.Second)
+	defer cancelTimeout()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	o := NewObservable(0)
+
+	itr := o.OnChange(ctx)
+	var arr []int
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for range 5 {
+			_, err := o.WaitUntil(ctx, func(i int) bool { return i%2 == 0 })
+			if err != nil {
+				requireNotEqual(t, err, nil)
+			}
+			o.Update(func(i *int) { *i += 1 })
+		}
+	})
+	wg.Go(func() {
+		for range 5 {
+			s, err := o.WaitUntil(ctx, func(i int) bool { return i%2 == 1 })
+			if err != nil {
+				requireNotEqual(t, err, nil)
+			}
+			o.Store(2 * s)
+		}
+	})
+	wg.Go(func() {
+		for x := range iterTake(itr, 9) {
+			arr = append(arr, x)
+		}
+	})
+
+	wg.Wait()
+
+	requireSliceEqual(t, arr, []int{1, 2, 3, 6, 7, 14, 15, 30, 31})
+}
+
 func Test_iterTake(t *testing.T) {
 	arr := []int{1, 2, 3, 4, 5, 6}
 	requireSliceEqual(t, []int{}, slices.Collect(iterTake(slices.Values(arr), 0)))
