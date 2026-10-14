@@ -224,24 +224,73 @@ func Test_Observable(t *testing.T) {
 			o.Store(2 * s)
 		}
 	})
-	wg.Go(func() {
-		for x := range iterTake(itr, 9) {
-			arr = append(arr, x)
-		}
-	})
+	wg.Go(func() { arr = slices.AppendSeq(arr, iterTake(itr, 9)) })
 
 	wg.Wait()
 
 	requireSliceEqual(t, arr, []int{1, 2, 3, 6, 7, 14, 15, 30, 31})
 }
 
+func Test_Observable_EachValue(t *testing.T) {
+	ctx, cancelTimeout := context.WithTimeout(context.Background(), time.Second)
+	defer cancelTimeout()
+
+	obs := NewObservable(1)
+	arr := make([]int, 0, 5)
+	itr := obs.EachValue(ctx)
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for x := range 5 {
+			obs.Store(x)
+		}
+	})
+	wg.Go(func() { arr = slices.AppendSeq(arr, iterTake(itr, 6)) })
+
+	wg.Wait()
+
+	requireSliceEqual(t, arr, []int{1, 0, 1, 2, 3, 4})
+}
+
+func Test_Observable_EachValue_uninit(t *testing.T) {
+	ctx, cancelTimeout := context.WithTimeout(context.Background(), time.Second)
+	defer cancelTimeout()
+
+	obs := new(Observable[int])
+	arr := make([]int, 0, 5)
+	itr := obs.EachValue(ctx)
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for x := range 5 {
+			obs.Store(x)
+		}
+	})
+	wg.Go(func() { arr = slices.AppendSeq(arr, iterTake(itr, 5)) })
+
+	wg.Wait()
+
+	requireSliceEqual(t, arr, []int{0, 1, 2, 3, 4})
+}
+
+func Test_cons_iter(t *testing.T) {
+	head := zeroCons[int]()
+	tail := head.Append(1)
+	tail = tail.Append(2)
+	tail = tail.Append(3)
+	tail = tail.Append(4)
+	tail = tail.Append(5)
+
+	requireSliceEqual(t, slices.Collect(iterTake(head.Iter(context.Background()), 5)), []int{1, 2, 3, 4, 5})
+}
+
 func Test_iterTake(t *testing.T) {
 	arr := []int{1, 2, 3, 4, 5, 6}
-	requireSliceEqual(t, []int{}, slices.Collect(iterTake(slices.Values(arr), 0)))
-	requireSliceEqual(t, []int{1}, slices.Collect(iterTake(slices.Values(arr), 1)))
-	requireSliceEqual(t, []int{1, 2, 3}, slices.Collect(iterTake(slices.Values(arr), 3)))
-	requireSliceEqual(t, []int{1, 2, 3, 4, 5, 6}, slices.Collect(iterTake(slices.Values(arr), 6)))
-	requireSliceEqual(t, []int{1, 2, 3, 4, 5, 6}, slices.Collect(iterTake(slices.Values(arr), 8)))
+	requireSliceEqual(t, slices.Collect(iterTake(slices.Values(arr), 0)), []int{})
+	requireSliceEqual(t, slices.Collect(iterTake(slices.Values(arr), 1)), []int{1})
+	requireSliceEqual(t, slices.Collect(iterTake(slices.Values(arr), 3)), []int{1, 2, 3})
+	requireSliceEqual(t, slices.Collect(iterTake(slices.Values(arr), 6)), []int{1, 2, 3, 4, 5, 6})
+	requireSliceEqual(t, slices.Collect(iterTake(slices.Values(arr), 8)), []int{1, 2, 3, 4, 5, 6})
 }
 
 func Test_iterTake_chan(t *testing.T) {

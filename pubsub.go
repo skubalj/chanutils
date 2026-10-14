@@ -222,9 +222,28 @@ func (c *Observable[T]) Update(cb func(*T)) {
 	c.end = c.end.Append(val)
 }
 
-// Return an iterator that yields each state that occurs in this Cond
+// Return an iterator that yields the observed value every time it is updated
 func (c *Observable[T]) OnChange(ctx context.Context) iter.Seq[T] {
 	return (*PubSub[T])(c).IterCtx(ctx)
+}
+
+// Return an iterator that yields each state for the observed value, including the initial state.
+func (c *Observable[T]) EachValue(ctx context.Context) iter.Seq[T] {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	// If we are not initialized, then we have no initial value to return;
+	// Simply init the observable and return the normal iterator
+	if c.end == nil {
+		c.end = zeroCons[T]()
+		return c.end.Iter(ctx)
+	}
+
+	// Otherwise, make a new "start" entry that is one step back. This means that
+	// the "most recent" value will be re-read.
+	head := zeroCons[T]()
+	head.SetNext(c.end)
+	return head.Iter(ctx)
 }
 
 // Function to release resources associated with a PubSub resource
@@ -251,11 +270,15 @@ func (c *cons[T]) Append(value T) *cons[T] {
 	}
 
 	if c != nil {
-		c.next = next
-		close(c.wait)
+		c.SetNext(next)
 	}
 
 	return next
+}
+
+func (c *cons[T]) SetNext(next *cons[T]) {
+	c.next = next
+	close(c.wait)
 }
 
 func (c *cons[T]) Iter(ctx context.Context) iter.Seq[T] {

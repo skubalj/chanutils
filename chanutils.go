@@ -164,9 +164,23 @@ func (s Semaphore) Release() {
 	<-s
 }
 
-// Release all permits from the semaphore
-func (s Semaphore) ReleaseAll() {
-	Drain(s)
+// Perform the given callback while holding a permit
+func (s Semaphore) WithPermit(fn func()) {
+	s.Acquire()
+	defer s.Release()
+	fn()
+}
+
+// Perform the given callback while holding a permit, returning an error if the
+// context is cancelled before a permit could be acquired.
+func (s Semaphore) WithPermitCtx(ctx context.Context, fn func()) error {
+	err := s.AcquireCtx(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.Release()
+	fn()
+	return nil
 }
 
 // A synchronization primitive that allows threads to wait for some event to
