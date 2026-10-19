@@ -248,18 +248,26 @@ func (s Semaphore) WithPermitCtx(ctx context.Context, fn func()) error {
 //		}
 //	}
 type Gate struct {
-	p atomic.Pointer[chan struct{}]
+	p    atomic.Pointer[chan struct{}]
+	once sync.Once
 }
 
 func NewGate() *Gate {
-	ch := make(chan struct{})
 	g := new(Gate)
-	g.p.Store(&ch)
+	g.init()
 	return g
+}
+
+func (g *Gate) init() {
+	g.once.Do(func() {
+		ch := make(chan struct{})
+		g.p.Store(&ch)
+	})
 }
 
 // Get a channel that will produce a value when released
 func (g *Gate) Waiter() <-chan struct{} {
+	g.init()
 	return *g.p.Load()
 }
 
@@ -267,6 +275,7 @@ func (g *Gate) Waiter() <-chan struct{} {
 //
 // Returns false if no consumers are currently waiting
 func (g *Gate) ReleaseOne() bool {
+	g.init()
 	select {
 	case (*g.p.Load()) <- struct{}{}:
 		return true
@@ -275,11 +284,34 @@ func (g *Gate) ReleaseOne() bool {
 	}
 }
 
-// Release all consumers that are currently waiting
-func (g *Gate) ReleaseAll() {
+// Release all consumers that are currently waiting and immediately rotate the
+// underlying channel.
+func (g *Gate) ReleaseAndReset() {
+	g.init()
+	close(g.Reset())
+}
+
+// Release all consumers, but leave the closed channel in place.
+//
+// You must call Reset before using any other Release function or you will
+// cause a panic due to a double-closed channel.
+//
+// This is useful when a Gate is used to indicate that something "is happening",
+// as opposed to indicating that something "has happened".
+func (g *Gate) ReleaseNoReset() {
+	g.init()
+	close(*g.p.Load())
+}
+
+// Rotate the underlying channel used for notification, returning the old
+// channel.
+// 
+// Calling Reset without closing the channel can leak deadlocked goroutines.
+// This method is intended to be called after ReleaseNoReset.
+func (g *Gate) Reset() chan struct{} {
+	g.init()
 	ch := make(chan struct{})
-	old := g.p.Swap(&ch)
-	close(*old)
+	return *g.p.Swap(&ch)
 }
 
 // An observable value; conceptually a sync.Cond that owns the data it is
@@ -369,7 +401,7 @@ func (c *CondValue[T]) WaitUntil(ctx context.Context, predicate func(T) bool) (v
 //
 // The mutex must be locked with Lock before calling this function.
 func (c *CondValue[T]) Store(value T) {
-	defer c.notifier.ReleaseAll()
+	defer c.notifier.ReleaseAndReset()
 	c.value = value
 }
 

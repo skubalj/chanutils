@@ -63,6 +63,61 @@ func Test_FromIter_context(t *testing.T) {
 	}
 }
 
+func Test_Gate_noninit(t *testing.T) {
+	g := new(Gate)
+	ch := g.Waiter()
+	requireNotEqual(t, ch, nil)
+
+	g = new(Gate)
+	g.ReleaseAndReset()
+
+	g = new(Gate)
+	g.ReleaseNoReset()
+
+	g = new(Gate)
+	didRelease := g.ReleaseOne()
+	requireEqual(t, didRelease, false)
+}
+
+func Test_Gate_ReleaseNoReset(t *testing.T) {
+	g := new(Gate)
+
+	// Should block
+	ch := g.Waiter()
+	select {
+	case <-ch:
+		t.Fail()
+	default:
+	}
+
+	// Channel closed, but not swapped out
+	g.ReleaseNoReset()
+	ch2 := g.Waiter()
+	<-ch
+	<-ch2
+	requireEqual(t, ch2, ch)
+
+	// Channel swapped out and should block again
+	g.Reset()
+	ch3 := g.Waiter()
+	<-ch
+	select {
+	case <-ch3:
+		t.Fail()
+	default:
+	}
+	requireNotEqual(t, ch3, ch)
+
+	// Combined reset works
+	g.ReleaseAndReset()
+	ch4 := g.Waiter()
+	select {
+	case <-ch4:
+		t.Fail()
+	default:
+	}
+}
+
 func TestCondValue(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancelTimeout()
