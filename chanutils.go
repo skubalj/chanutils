@@ -82,11 +82,31 @@ func Drain[T any](rx <-chan T) {
 }
 
 // Simple adapter to the [iter.Seq] interface
+//
+// The channel must be closed, or the yield function must return false
+// (such as by breaking or returning from a for loop driving the iterator)
 func AsIter[T any](ch <-chan T) iter.Seq[T] {
 	return func(yield func(T) bool) {
 		for x := range ch {
 			if !yield(x) {
 				return
+			}
+		}
+	}
+}
+
+// Simple adapter for the [iter.Seq] interface that will stop returning
+// elements when the context is cancelled or the channel is closed.
+func AsIterCtx[T any](ctx context.Context, ch <-chan T) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case x, ok := <-ch:
+				if !ok || !yield(x) {
+					return
+				}
 			}
 		}
 	}
