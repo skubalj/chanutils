@@ -50,7 +50,7 @@ func Test_PubSub_send(t *testing.T) {
 func Test_PubSub_Iter(t *testing.T) {
 	ps := NewPubSub[int]()
 	ps.Send(0)
-	itr := ps.Iter()
+	itr := ps.Iter(context.Background())
 
 	var wg sync.WaitGroup
 	var arr []int

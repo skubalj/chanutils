@@ -84,11 +84,13 @@ func (ps *PubSub[T]) Send(value T) {
 	ps.end = ps.end.Append(value)
 }
 
-func (ps *PubSub[T]) Iter() iter.Seq[T] {
-	return ps.IterCtx(context.Background())
-}
-
-func (ps *PubSub[T]) IterCtx(ctx context.Context) iter.Seq[T] {
+// Iterate over each new value in this pubsub.
+//
+// Whenever it reaches the end, the iterator will block until the next value is
+// available, unless the context is cancelled. As a pubsub channel cannot be
+// closed to indicate that no more values will be provided, it is inadvisable
+// to call this function with a background context.
+func (ps *PubSub[T]) Iter(ctx context.Context) iter.Seq[T] {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
@@ -113,7 +115,7 @@ func (ps *PubSub[T]) MakeSubscriber() (<-chan T, CancelFunc) {
 // the cancel function proactively when you are done using the channel.
 func (ps *PubSub[T]) MakeSubscriberCtx(ctx context.Context) (<-chan T, CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
-	itr := ps.IterCtx(ctx)
+	itr := ps.Iter(ctx)
 	sink := make(chan T)
 
 	go func() {
@@ -139,7 +141,7 @@ func (ps *PubSub[T]) RegisterSubscriber(sink chan<- T) CancelFunc {
 // function is called.
 func (ps *PubSub[T]) RegisterSubscriberCtx(ctx context.Context, sink chan<- T) CancelFunc {
 	ctx, cancel := context.WithCancel(ctx)
-	itr := ps.IterCtx(ctx)
+	itr := ps.Iter(ctx)
 
 	go func() {
 		defer cancel()
@@ -224,7 +226,7 @@ func (c *Observable[T]) Update(cb func(*T)) {
 
 // Return an iterator that yields the observed value every time it is updated
 func (c *Observable[T]) OnChange(ctx context.Context) iter.Seq[T] {
-	return (*PubSub[T])(c).IterCtx(ctx)
+	return (*PubSub[T])(c).Iter(ctx)
 }
 
 // Return an iterator that yields each state for the observed value, including the initial state.
